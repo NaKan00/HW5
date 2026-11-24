@@ -1,0 +1,6 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+pydantic==2.11.4
+confluent-kafka[avro,schemaregistry]==2.10.0
+fastavro==1.10.0
+pytest==8.3.5

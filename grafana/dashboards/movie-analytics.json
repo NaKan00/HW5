@@ -1,0 +1,251 @@
+{
+  "uid": "cinema-analytics",
+  "title": "Cinema Analytics",
+  "tags": [
+    "cinema"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "2026-04-01T00:00:00.000Z",
+    "to": "2026-04-10T00:00:00.000Z"
+  },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Viewing retention by cohort",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "cinema-clickhouse"
+      },
+      "gridPos": {
+        "w": 24,
+        "h": 8,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "cinema-clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toString(metric_date) AS Cohort, any(cohort_size) AS Users,\n    maxIf(retention_rate, day_number = 0) AS `Day 0`,\n    maxIf(retention_rate, day_number = 1) AS `Day 1`,\n    maxIf(retention_rate, day_number = 2) AS `Day 2`,\n    maxIf(retention_rate, day_number = 3) AS `Day 3`,\n    maxIf(retention_rate, day_number = 4) AS `Day 4`,\n    maxIf(retention_rate, day_number = 5) AS `Day 5`,\n    maxIf(retention_rate, day_number = 6) AS `Day 6`,\n    maxIf(retention_rate, day_number = 7) AS `Day 7`\nFROM cinema.daily_retention\nWHERE $__timeFilter(toDateTime(metric_date, 'UTC'))\nGROUP BY metric_date\nORDER BY metric_date"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^Day [0-7]$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "semi-dark-red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.25
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.75
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Each row starts on the user's first viewing date. Day N shows the fraction active exactly N days later."
+    },
+    {
+      "id": 2,
+      "title": "Daily active users",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "cinema-clickhouse"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "cinema-clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, dau\nFROM cinema.daily_activity\nWHERE $__timeFilter(toDateTime(metric_date, 'UTC'))\nORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "View conversion",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "cinema-clickhouse"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "cinema-clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, conversion\nFROM cinema.daily_activity\nWHERE $__timeFilter(toDateTime(metric_date, 'UTC'))\nORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Average completed watch time",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "cinema-clickhouse"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "cinema-clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, avg_watch_seconds\nFROM cinema.daily_activity\nWHERE $__timeFilter(toDateTime(metric_date, 'UTC'))\nORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Top movies by completed views",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "cinema-clickhouse"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "cinema-clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "sql",
+          "format": 0,
+          "rawSql": "SELECT toString(metric_date) AS Day, rank AS Rank, movie_id AS Movie, completed_views AS Completions\nFROM cinema.daily_top_movies\nWHERE $__timeFilter(toDateTime(metric_date, 'UTC'))\nORDER BY metric_date DESC, rank"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}
