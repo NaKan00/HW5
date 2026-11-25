@@ -1,0 +1,197 @@
+name: cinema-hw5
+x-kafka-env: &kafka-env
+  CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:29093,2@kafka-2:29093,3@kafka-controller:29093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+x-broker-env: &broker-env
+  <<: *kafka-env
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+  KAFKA_MIN_INSYNC_REPLICAS: 1
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+x-local-network: &local-network
+  NO_PROXY: localhost,127.0.0.1,kafka-1,kafka-2,kafka-controller,schema-registry,clickhouse,postgres,minio,movie-service,aggregation-service,grafana
+  no_proxy: localhost,127.0.0.1,kafka-1,kafka-2,kafka-controller,schema-registry,clickhouse,postgres,minio,movie-service,aggregation-service,grafana
+x-health: &health
+  interval: 5s
+  timeout: 5s
+  retries: 24
+  start_period: 10s
+x-broker: &broker
+  depends_on:
+    kafka-controller: {condition: service_started}
+  image: confluentinc/cp-kafka:7.7.1
+  healthcheck:
+    <<: *health
+    test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+    timeout: 10s
+
+services:
+  kafka-1:
+    <<: *broker
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092
+    volumes: [kafka-1:/var/lib/kafka/data]
+  kafka-2:
+    <<: *broker
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:29092
+    volumes: [kafka-2:/var/lib/kafka/data]
+  kafka-controller:
+    image: confluentinc/cp-kafka:7.7.1
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_LISTENERS: CONTROLLER://:29093
+    volumes: [kafka-controller:/var/lib/kafka/data]
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "kafka-metadata-quorum --bootstrap-controller localhost:29093 describe --status >/dev/null 2>&1"]
+      timeout: 10s
+  kafka-init:
+    image: confluentinc/cp-kafka:7.7.1
+    depends_on:
+      kafka-1: {condition: service_healthy}
+      kafka-2: {condition: service_healthy}
+    environment:
+      KAFKA_HEAP_OPTS: -Xms64m -Xmx256m
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092 --create --if-not-exists --topic movie-events --partitions 3 --replication-factor 2 --config min.insync.replicas=1
+        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092 --describe --topic movie-events
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.7.1
+    depends_on:
+      kafka-1: {condition: service_healthy}
+      kafka-2: {condition: service_healthy}
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      <<: *local-network
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka-1:29092,PLAINTEXT://kafka-2:29092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 2
+      SCHEMA_REGISTRY_HEAP_OPTS: -Xms128m -Xmx384m
+    healthcheck:
+      <<: *health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/subjects"]
+  clickhouse:
+    build: ./clickhouse
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      schema-registry: {condition: service_healthy}
+    ports: ["127.0.0.1:8123:8123"]
+    environment:
+      <<: *local-network
+      CLICKHOUSE_DB: cinema
+      CLICKHOUSE_USER: cinema
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-cinema_demo}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes: [clickhouse:/var/lib/clickhouse]
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --database cinema --query 'SELECT count() FROM daily_retention'"]
+  postgres:
+    build: ./postgres
+    environment:
+      POSTGRES_DB: cinema
+      POSTGRES_USER: cinema
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cinema_demo}
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -h localhost -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'SELECT 1 FROM daily_metrics LIMIT 0'"]
+  minio:
+    image: bitnamilegacy/minio:2025.4.22-debian-12-r2
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
+    command: ["server", "/bitnami/minio/data", "--console-address", ":9001"]
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    environment: &minio-env
+      <<: *local-network
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cinema-demo}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cinema-demo-password}
+    volumes: [minio:/bitnami/minio/data]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
+  minio-init:
+    build: ./minio
+    depends_on:
+      minio: {condition: service_healthy}
+    environment: *minio-env
+    command: ["mb", "--ignore-existing", "local/movie-analytics"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "/usr/local/bin/minio-cli", "stat", "local/movie-analytics"]
+  movie-service:
+    build:
+      context: .
+      dockerfile: movie-service/Dockerfile
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      schema-registry: {condition: service_healthy}
+    environment:
+      <<: *local-network
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/health', timeout=3)"]
+  aggregation-service:
+    build: ./aggregation-service
+    depends_on:
+      clickhouse: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    environment:
+      <<: *minio-env
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-cinema_demo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cinema_demo}
+      AGGREGATION_INTERVAL_SECONDS: ${AGGREGATION_INTERVAL_SECONDS:-60}
+      EXPORT_HOUR_UTC: ${EXPORT_HOUR_UTC:-0}
+    ports: ["127.0.0.1:8001:8001"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8001/health', timeout=3)"]
+  grafana:
+    build: ./grafana
+    depends_on:
+      clickhouse: {condition: service_healthy}
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      <<: *local-network
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-cinema_demo}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-cinema_demo}
+    volumes: [grafana:/var/lib/grafana]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "wget", "-Y", "off", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+
+volumes:
+  kafka-1:
+  kafka-2:
+  kafka-controller:
+  clickhouse:
+  postgres:
+  minio:
+  grafana:

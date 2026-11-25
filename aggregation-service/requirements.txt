@@ -1,0 +1,7 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+pydantic==2.11.4
+clickhouse-connect==0.8.17
+psycopg[binary]==3.2.9
+boto3==1.38.18
+pytest==8.3.5
